@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Building Lighting Management System</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- MQTT.js via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0b0f17; color: #f3f4f6; }
+    .tab-btn.active {
+      background-color: #1e293b;
+      color: #38bdf8;
+      border-bottom: 2px solid #38bdf8;
+    }
+  </style>
+</head>
+<body class="p-4 md:p-6">
+
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- HEADER & STATUS BAR GLOBAL -->
+    <header class="flex flex-col md:flex-row justify-between items-center bg-gray-900 p-4 rounded-xl border border-gray-800 gap-4">
+      <div class="flex items-center space-x-3">
+        <i class="fa-solid fa-building-user text-sky-400 text-2xl"></i>
+        <div>
+          <h1 class="text-xl font-bold text-white">Smart Building Lighting Center</h1>
+          <p class="text-xs text-gray-400">Integrasi HMI, PLC Gateway & Analytics Monitoring Wokwi ESP32</p>
+        </div>
+      </div>
+      <div id="mqtt-global-status" class="text-xs bg-yellow-950 text-yellow-400 border border-yellow-800 px-3 py-1.5 rounded-full font-mono font-semibold">
+        <i class="fa-solid fa-spinner fa-spin mr-1"></i> CONNECTING BROKER...
+      </div>
+    </header>
+
+    <!-- TAB NAVIGATION BAR -->
+    <nav class="flex border-b border-gray-800 bg-gray-900 rounded-xl overflow-hidden p-1 gap-1">
+      <button onclick="switchTab('tab-hmi')" id="btn-tab-hmi" class="tab-btn active flex-1 py-3 px-4 text-sm font-semibold rounded-lg transition-all duration-200 flex items-center justify-center space-x-2">
+        <i class="fa-solid fa-toggle-on"></i>
+        <span>HMI Kontrol Lampu</span>
+      </button>
+      <button onclick="switchTab('tab-gateway')" id="btn-tab-gateway" class="tab-btn flex-1 py-3 px-4 text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition-all duration-200 flex items-center justify-center space-x-2">
+        <i class="fa-solid fa-microchip"></i>
+        <span>Kontroler PLC & Gateway</span>
+      </button>
+      <button onclick="switchTab('tab-analytics')" id="btn-tab-analytics" class="tab-btn flex-1 py-3 px-4 text-sm font-semibold rounded-lg text-gray-400 hover:text-white transition-all duration-200 flex items-center justify-center space-x-2">
+        <i class="fa-solid fa-chart-pie"></i>
+        <span>Dashboard Analytics</span>
+      </button>
+    </nav>
+
+    <!-- ================= TAB 1: HMI KONTROL LAMPU ================= -->
+    <section id="tab-hmi" class="tab-content space-y-6">
+      <!-- Master Controls -->
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-white">Master Switch Gedung</h2>
+          <span class="text-xs text-gray-400">Kontrol sakelar seluruh penerangan gedung secara bersamaan</span>
+        </div>
+        <div class="flex gap-3">
+          <button class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-4 py-2.5 rounded-lg transition" onclick="sendMasterControl(true)">
+            <i class="fa-solid fa-power-off mr-1"></i> NYALAKAN SEMUA
+          </button>
+          <button class="bg-red-600 hover:bg-red-500 text-white font-semibold text-xs px-4 py-2.5 rounded-lg transition" onclick="sendMasterControl(false)">
+            <i class="fa-solid fa-power-off mr-1"></i> MATIKAN SEMUA
+          </button>
+        </div>
+      </div>
+
+      <!-- Grid Cards Lampu -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" id="hmi-light-grid">
+        <!-- Rendered by JS -->
+      </div>
+    </section>
+
+    <!-- ================= TAB 2: KONTROLER PLC & GATEWAY ================= -->
+    <section id="tab-gateway" class="tab-content hidden space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Relay Table -->
+        <div class="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-5">
+          <h2 class="font-semibold text-gray-200 mb-4 border-b border-gray-800 pb-2">Pemetaan Output Digital Relay ESP32 / Wokwi</h2>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-gray-300">
+              <thead class="text-xs text-gray-400 bg-black uppercase font-mono">
+                <tr>
+                  <th class="p-2">ID Lampu</th>
+                  <th class="p-2">Zona Lampu</th>
+                  <th class="p-2">Brightness</th>
+                  <th class="p-2">Status Relay</th>
+                  <th class="p-2 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="relay-table" class="divide-y divide-gray-800 font-mono text-xs"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Scheduler -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h2 class="font-semibold text-gray-200 border-b border-gray-800 pb-2">Jadwal Otomatis (Scheduler)</h2>
+          <form onsubmit="addSchedule(event)" class="space-y-3">
+            <div>
+              <label class="text-xs text-gray-400 block mb-1">Target Area</label>
+              <select id="sched-target" class="w-full bg-black border border-gray-700 p-2 rounded text-xs text-white">
+                <option value="ALL">Semua Lampu</option>
+                <option value="L1-01">Lantai 1 - Ruang Utama</option>
+                <option value="L2-01">Lantai 2 - Ruang Rapat</option>
+                <option value="OUT-01">Outdoor</option>
+              </select>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <input type="time" id="sched-on" value="06:00" class="bg-black border border-gray-700 p-2 rounded text-xs text-white">
+              <input type="time" id="sched-off" value="18:00" class="bg-black border border-gray-700 p-2 rounded text-xs text-white">
+            </div>
+            <button type="submit" class="w-full bg-sky-600 hover:bg-sky-500 text-white font-bold p-2 rounded text-xs">Tambah Aturan</button>
+          </form>
+          <div id="schedule-list" class="space-y-1 text-xs font-mono"></div>
+        </div>
+      </div>
+
+      <!-- Live Terminal Log -->
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="font-semibold text-emerald-400 font-mono text-sm"><i class="fa-solid fa-terminal"></i> Terminal Live Hardware Signal Command Log</h2>
+          <button onclick="document.getElementById('console-log').innerHTML=''" class="text-xs bg-gray-800 p-1 px-2 rounded text-gray-300">Clear</button>
+        </div>
+        <div id="console-log" class="bg-black p-4 rounded-lg font-mono text-xs text-emerald-400 h-36 overflow-y-auto space-y-1 border border-gray-800"></div>
+      </div>
+    </section>
+
+    <!-- ================= TAB 3: DASHBOARD ANALYTICS ================= -->
+    <section id="tab-analytics" class="tab-content hidden space-y-6">
+      <!-- Metric Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+          <span class="text-xs text-gray-400">Total Lampu Beroperasi</span>
+          <div id="metric-active-count" class="text-2xl font-bold text-white mt-1">0 / 7 Titik</div>
+          <div id="metric-active-pct" class="text-xs text-amber-400 mt-1">0% Lampu Menyala</div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+          <span class="text-xs text-gray-400">Beban Daya Instan</span>
+          <div id="metric-power" class="text-2xl font-bold text-sky-400 font-mono mt-1">0.00 kW</div>
+          <div class="text-xs text-emerald-400 mt-1">Real-time Calculation</div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+          <span class="text-xs text-gray-400">Est. Biaya Listrik Hari Ini</span>
+          <div id="metric-cost" class="text-2xl font-bold text-emerald-400 font-mono mt-1">Rp 0</div>
+          <div class="text-xs text-gray-500 mt-1">Tarif Industri Rp 1.444/kWh</div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 p-4 rounded-xl">
+          <span class="text-xs text-gray-400">Hardware Controller</span>
+          <div class="text-2xl font-bold text-emerald-400 mt-1">ESP32 (Wokwi)</div>
+          <div id="metric-pot" class="text-xs text-gray-400 mt-1">Potentiometer Dimmer: -</div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-gray-900 border border-gray-800 p-5 rounded-xl">
+          <h2 class="font-semibold text-gray-200 mb-4 border-b border-gray-800 pb-2">Profil Konsumsi Energi Per Jam (kWh)</h2>
+          <div class="h-64"><canvas id="hourlyChart"></canvas></div>
+        </div>
+        <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl">
+          <h2 class="font-semibold text-gray-200 mb-4 border-b border-gray-800 pb-2">Distribusi Beban Per Zona</h2>
+          <div class="h-64"><canvas id="zoneChart"></canvas></div>
+        </div>
+      </div>
+
+      <!-- System Alarm Table -->
+      <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl">
+        <h2 class="font-semibold text-gray-200 mb-3 border-b border-gray-800 pb-2">Log Alarm & Kejadian System Real-Time</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs font-mono text-gray-300">
+            <thead class="bg-black text-gray-400 uppercase">
+              <tr>
+                <th class="p-2">Waktu</th>
+                <th class="p-2">Kategori</th>
+                <th class="p-2">Sumber</th>
+                <th class="p-2">Deskripsi</th>
+                <th class="p-2">Prioritas</th>
+              </tr>
+            </thead>
+            <tbody id="alarm-log-table" class="divide-y divide-gray-800">
+              <!-- Event Log -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    // Config Broker MQTT
+    const TOPIC_CONTROL = "disma_gedung_iot/lampu/control";
+    const TOPIC_STATUS  = "disma_gedung_iot/lampu/status";
+    const TOPIC_DIMMER  = "disma_gedung_iot/lampu/dimmer";
+
+    // Master Data Lampu & State
+    const lightState = {
+      "L1-01": { name: "Lantai 1 - Ruang Utama", zone: "Lantai 1", powerWatt: 100, status: "OFF", brightness: 100 },
+      "L1-02": { name: "Lantai 1 - Koridor",     zone: "Lantai 1", powerWatt: 100, status: "OFF", brightness: 100 },
+      "L2-01": { name: "Lantai 2 - Ruang Rapat", zone: "Lantai 2", powerWatt: 150, status: "OFF", brightness: 100 },
+      "L2-02": { name: "Lantai 2 - Lab IoT",      zone: "Lantai 2", powerWatt: 150, status: "OFF", brightness: 100 },
+      "L3-01": { name: "Lantai 3 - Server Room", zone: "Lantai 3", powerWatt: 200, status: "OFF", brightness: 100 },
+      "L3-02": { name: "Lantai 3 - Workspace",   zone: "Lantai 3", powerWatt: 200, status: "OFF", brightness: 100 },
+      "OUT-01": { name: "Area Out Door / Taman", zone: "Outdoor",  powerWatt: 300, status: "OFF", brightness: 100 }
+    };
+
+    let zoneChartObj = null;
+
+    // MQTT Setup
+    const brokerUrl = "wss://broker.hivemq.com:8884/mqtt";
+    const clientId = "Integrated_System_Web_" + Math.random().toString(16).substr(2, 8);
+    const client = mqtt.connect(brokerUrl, { clientId: clientId, clean: true });
+
+    client.on('connect', () => {
+      const statusEl = document.getElementById('mqtt-global-status');
+      statusEl.className = "text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-3 py-1.5 rounded-full font-mono font-semibold";
+      statusEl.innerHTML = '<i class="fa-solid fa-circle-check mr-1"></i> HIVEMQ BROKER ONLINE';
+
+      client.subscribe(TOPIC_STATUS);
+      client.subscribe(TOPIC_DIMMER);
+      logEntry("SYSTEM_INIT: Connected to HiveMQ WebSocket Broker.");
+      addLogEvent("SYSTEM", "MQTT Gateway", "System terhubung ke Broker", "NORMAL");
+    });
+
+    client.on('offline', () => {
+      const statusEl = document.getElementById('mqtt-global-status');
+      statusEl.className = "text-xs bg-red-950 text-red-400 border border-red-800 px-3 py-1.5 rounded-full font-mono font-semibold";
+      statusEl.innerHTML = '<i class="fa-solid fa-triangle-exclamation mr-1"></i> BROKER OFFLINE';
+    });
+
+    client.on('message', (topic, message) => {
+      try {
+        const data = JSON.parse(message.toString());
+
+        if (topic === TOPIC_STATUS) {
+          if (lightState[data.id]) {
+            lightState[data.id].status = data.status;
+            if (data.brightness !== undefined) {
+              lightState[data.id].brightness = data.brightness;
+            }
+
+            updateAllViews(data.id);
+            logEntry(`RX_FEEDBACK: ${data.id} -> ${data.status} (${data.brightness}%)`);
+            
+            const prio = data.status === "OFF" ? "INFORMASI" : "NORMAL";
+            addLogEvent("HARDWARE", data.id, `Status berubah menjadi ${data.status}`, prio);
+          }
+        } else if (topic === TOPIC_DIMMER) {
+          document.getElementById('metric-pot').textContent = `Potentiometer Dimmer: ${data.level}%`;
+          logEntry(`RX_POTENTIOMETER: Analog value = ${data.level}%`);
+          addLogEvent("SENSOR", "Potentiometer", `Level dimmer analog: ${data.level}%`, "INFORMASI");
+        }
+      } catch (e) {
+        console.error("MQTT Parsing error:", e);
+      }
+    });
+
+    // NAVIGATION SYSTEM TAB SWITCHER
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        btn.classList.add('text-gray-400');
+      });
+
+      document.getElementById(tabId).classList.remove('hidden');
+      const activeBtn = document.getElementById(`btn-${tabId}`);
+      activeBtn.classList.add('active');
+      activeBtn.classList.remove('text-gray-400');
+    }
+
+    // RENDER HMI LIGHT CARDS
+    function renderHMIGrid() {
+      const container = document.getElementById('hmi-light-grid');
+      container.innerHTML = '';
+
+      Object.keys(lightState).forEach(id => {
+        const item = lightState[id];
+        const isON = item.status === "ON";
+
+        const card = document.createElement('div');
+        card.id = `hmi-card-${id}`;
+        card.className = `bg-gray-900 border ${isON ? 'border-sky-400' : 'border-gray-800'} rounded-xl p-4 flex flex-col justify-between space-y-4 transition-all`;
+        
+        card.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <h3 class="font-bold text-white text-sm">${item.name}</h3>
+              <span class="text-xs text-gray-400 font-mono">${id}</span>
+            </div>
+            <span id="hmi-badge-${id}" class="text-[10px] px-2 py-0.5 rounded font-bold font-mono ${isON ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-gray-800 text-gray-400'}">
+              ${item.status}
+            </span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-gray-400">Sakelar:</span>
+            <button onclick="toggleLight('${id}')" class="bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs px-3 py-1.5 rounded transition">
+              TOGGLE
+            </button>
+          </div>
+          <div class="space-y-1">
+            <div class="flex justify-between text-xs">
+              <span class="text-gray-400">Dimmer:</span>
+              <span id="hmi-dim-val-${id}" class="text-sky-400 font-mono">${item.brightness}%</span>
+            </div>
+            <input type="range" id="hmi-slider-${id}" min="0" max="100" value="${item.brightness}" 
+                   onchange="sendDimmerControl('${id}', this.value)"
+                   class="w-full accent-sky-400 bg-gray-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // RENDER GATEWAY RELAY TABLE
+    function renderRelayTable() {
+      const tbody = document.getElementById('relay-table');
+      tbody.innerHTML = '';
+
+      Object.keys(lightState).forEach(id => {
+        const item = lightState[id];
+        const isON = item.status === 'ON';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="p-2 text-sky-400">${id}</td>
+          <td class="p-2 font-sans font-medium text-white">${item.name}</td>
+          <td class="p-2 text-yellow-400">${item.brightness}%</td>
+          <td class="p-2">
+            <span class="px-2 py-0.5 rounded ${isON ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-gray-800 text-gray-400'}">
+              ${isON ? 'CLOSED (ON)' : 'OPEN (OFF)'}
+            </span>
+          </td>
+          <td class="p-2 text-right">
+            <button onclick="toggleLight('${id}')" class="bg-gray-800 hover:bg-gray-700 px-2 py-1 rounded text-[10px] text-white">
+              Toggle Relay
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // UPDATE ALL UI VIEWS & METRICS
+    function updateAllViews(updatedId) {
+      const item = lightState[updatedId];
+      if (!item) return;
+
+      // 1. Update Tab HMI
+      const badge = document.getElementById(`hmi-badge-${updatedId}`);
+      const card = document.getElementById(`hmi-card-${updatedId}`);
+      const dimVal = document.getElementById(`hmi-dim-val-${updatedId}`);
+      const slider = document.getElementById(`hmi-slider-${updatedId}`);
+
+      if (badge) {
+        badge.textContent = item.status;
+        badge.className = `text-[10px] px-2 py-0.5 rounded font-bold font-mono ${item.status === 'ON' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-gray-800 text-gray-400'}`;
+      }
+      if (card) {
+        card.className = `bg-gray-900 border ${item.status === 'ON' ? 'border-sky-400' : 'border-gray-800'} rounded-xl p-4 flex flex-col justify-between space-y-4 transition-all`;
+      }
+      if (dimVal) dimVal.textContent = `${item.brightness}%`;
+      if (slider) slider.value = item.brightness;
+
+      // 2. Update Tab Gateway Table
+      renderRelayTable();
+
+      // 3. Update Tab Analytics
+      updateAnalyticsMetrics();
+    }
+
+    function updateAnalyticsMetrics() {
+      let activeCount = 0;
+      let totalPowerWatt = 0;
+      const zonePower = { "Lantai 1": 0, "Lantai 2": 0, "Lantai 3": 0, "Outdoor": 0 };
+
+      Object.keys(lightState).forEach(id => {
+        const item = lightState[id];
+        if (item.status === "ON") {
+          activeCount++;
+          const currentWatt = (item.powerWatt * (item.brightness / 100));
+          totalPowerWatt += currentWatt;
+          zonePower[item.zone] += currentWatt;
+        }
+      });
+
+      const totalItems = Object.keys(lightState).length;
+      const pct = Math.round((activeCount / totalItems) * 100);
+      document.getElementById('metric-active-count').textContent = `${activeCount} / ${totalItems} Titik`;
+      document.getElementById('metric-active-pct').textContent = `${pct}% Lampu Menyala`;
+
+      const powerKW = (totalPowerWatt / 1000).toFixed(2);
+      document.getElementById('metric-power').textContent = `${powerKW} kW`;
+
+      const estCost = Math.round(powerKW * 12 * 1444);
+      document.getElementById('metric-cost').textContent = `Rp ${estCost.toLocaleString('id-ID')}`;
+
+      if (zoneChartObj) {
+        zoneChartObj.data.datasets[0].data = [
+          zonePower["Lantai 1"],
+          zonePower["Lantai 2"],
+          zonePower["Lantai 3"],
+          zonePower["Outdoor"]
+        ];
+        zoneChartObj.update();
+      }
+    }
+
+    // MQTT CONTROL COMMANDS
+    function toggleLight(id) {
+      const nextState = (lightState[id].status !== "ON");
+      const payload = JSON.stringify({ cmd: "TOGGLE", id: id, state: nextState });
+      client.publish(TOPIC_CONTROL, payload);
+      logEntry(`CMD_TOGGLE: Send payload ${payload}`);
+    }
+
+    function sendDimmerControl(id, level) {
+      const payload = JSON.stringify({ cmd: "DIMMER", id: id, level: parseInt(level, 10) });
+      client.publish(TOPIC_CONTROL, payload);
+      logEntry(`CMD_DIMMER: Send level ${level}% to ${id}`);
+    }
+
+    function sendMasterControl(state) {
+      const payload = JSON.stringify({ cmd: "MASTER", state: Boolean(state) });
+      client.publish(TOPIC_CONTROL, payload);
+      logEntry(`CMD_MASTER: Set All to ${state ? 'ON' : 'OFF'}`);
+    }
+
+    // LOG UTILITIES
+    function logEntry(msg) {
+      const logBox = document.getElementById('console-log');
+      if (!logBox) return;
+      const time = new Date().toLocaleTimeString('id-ID');
+      logBox.innerHTML += `<div><span class="text-gray-500">[${time}]</span> ${msg}</div>`;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function addLogEvent(cat, src, desc, prio) {
+      const table = document.getElementById('alarm-log-table');
+      if (!table) return;
+      const time = new Date().toLocaleTimeString('id-ID');
+      
+      let prioClass = "text-emerald-400";
+      if (prio === "TINGGI") prioClass = "text-red-400 font-bold";
+      if (prio === "INFORMASI") prioClass = "text-sky-400";
+
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td class="p-2 text-gray-500">${time}</td>
+        <td class="p-2">${cat}</td>
+        <td class="p-2 text-sky-400">${src}</td>
+        <td class="p-2">${desc}</td>
+        <td class="p-2 ${prioClass}">${prio}</td>
+      `;
+      table.insertBefore(row, table.firstChild);
+      if (table.children.length > 10) table.removeChild(table.lastChild);
+    }
+
+    function addSchedule(e) {
+      e.preventDefault();
+      const target = document.getElementById('sched-target').value;
+      const on = document.getElementById('sched-on').value;
+      const off = document.getElementById('sched-off').value;
+      document.getElementById('schedule-list').innerHTML += `<div class="p-2 bg-black rounded border border-gray-800 flex justify-between"><span>Target: ${target}</span> <span>ON: ${on} | OFF: ${off}</span></div>`;
+      logEntry(`SCHEDULER_ADD: Target ${target} (${on} - ${off})`);
+    }
+
+    // INITIALIZATION
+    window.onload = function() {
+      renderHMIGrid();
+      renderRelayTable();
+
+      // Chart Hourly
+      new Chart(document.getElementById('hourlyChart').getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'],
+          datasets: [{
+            label: 'kWh',
+            data: [0.8, 0.6, 4.2, 5.8, 4.9, 3.1],
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.2)',
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+
+      // Chart Zone
+      zoneChartObj = new Chart(document.getElementById('zoneChart').getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: ['Lantai 1', 'Lantai 2', 'Lantai 3', 'Outdoor'],
+          datasets: [{
+            data: [0, 0, 0, 0],
+            backgroundColor: ['#38bdf8', '#f59e0b', '#10b981', '#8b5cf6'],
+            borderWidth: 0
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+
+      updateAnalyticsMetrics();
+    };
+  </script>
+</body>
+</html>
